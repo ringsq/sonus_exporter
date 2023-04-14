@@ -1,0 +1,14 @@
+[Unit]
+Description=Sonus Exporter
+After=network-online.target
+
+# This assumes you are running sonus_exporter under the user "prometheus"
+
+[Service]
+User=prometheus
+Restart=on-failure
+EnvironmentFile=-/etc/sysconfig/sonus_exporter
+ExecStart=/opt/sonus_exporter/sonus_exporter 
+
+[Install]
+WantedBy=multi-user.target
