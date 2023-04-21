@@ -1,7 +1,7 @@
 go:
     # Whenever the Go version is updated here,
     # .circle/config.yml should also be updated.
-    version: 1.20
+    version: 0.1.0
 repository:
     path: github.com/ringsq/sonus_exporter
 build:
@@ -14,6 +14,4 @@ build:
         -X github.com/prometheus/common/version.BuildDate={{date "20060102-15:04:05"}}
 tarball:
     files:
-        - snmp.yml
         - LICENSE
-        - NOTICE
