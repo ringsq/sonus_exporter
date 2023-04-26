@@ -41,14 +41,11 @@ var (
 
 var (
 	Probers = []ProbeFn{
+		sonus.ZoneProbe,
 		sonus.ServerInfoMetrics,
-		sonus.SIPMetrics,
-		sonus.CallMetrics,
 		sonus.FanMetrics,
 		sonus.PowerMetrics,
 		sonus.DSPMetrics,
-		sonus.TGMetrics,
-		sonus.ZoneMetrics,
 	}
 )
 

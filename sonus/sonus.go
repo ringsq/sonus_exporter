@@ -19,15 +19,15 @@ import (
 // Sonus URLs
 const (
 	// Gets the SBC system information
-	systemInfoPath       = "/config/system"
-	serverInfoPath       = "/operational/system/serverStatus/"
-	contextListPath      = "/config/addressContext/"
-	zoneStatusPath       = "/operational/addressContext/%s/zoneStatus/"
+	systemInfoPath       = "/sonusSystem:system/admin"
+	serverInfoPath       = "/sonusSystem:system/serverStatus"
+	contextListPath      = "/sonusAddressContext:addressContext"
+	zoneStatusPath       = "/sonusAddressContext:addressContext=%s/sonusZone:zone"
 	ipInterfaceGroupPath = "/operational/addressContext/%s/ipInterfaceGroup/"
 	sipStatsPath         = "/operational/addressContext/%s/zone/%s/sipCurrentStatistics/"
-	fanStatusPath        = "/operational/system/fanStatus/"
-	powerSupplyPath      = "/operational/system/powerSupplyStatus/"
-	dspStatusPath        = "/operational/system/dspStatus/dspUsage/"
+	fanStatusPath        = "/sonusSystem:system/fanStatus/"
+	powerSupplyPath      = "/sonusSystem:system/powerSupplyStatus/"
+	dspStatusPath        = "/sonusSystem:system/sonusDrmDspStatus:dspStatus" // possibly with /dspUsage appended
 	tgStatusPath         = "/operational/global/globalTrunkGroupStatus/"
 	tgConfigPath         = "/config/addressContext/%s/zone/%s/sipTrunkGroup/"
 	callStatusPath       = "/operational/addressContext/%s/zone/%s/callCurrentStatistics/"
@@ -39,22 +39,25 @@ type system struct {
 }
 
 type admin struct {
-	Name string `json:"name" xml:"name"`
+	Name             string `json:"name" xml:"name"`
+	ActualSystemName string `json:"actualSystemName" xml:"actualSystemName"`
 }
 
 type AddressContexts struct {
-	AddressContext []struct {
-		Name     string `xml:"name"`
-		DnsGroup struct {
-			Name string `xml:"name"`
-		} `xml:"dnsGroup"`
-		IpInterfaceGroup []struct {
-			Name string `xml:"name"`
-		} `xml:"ipInterfaceGroup"`
-		Zone []struct {
-			Name string `xml:"name"`
-		} `xml:"zone"`
-	} `xml:"addressContext"`
+	AddressContext []AddressContext `xml:"addressContext"`
+}
+
+type AddressContext struct {
+	Name     string `xml:"name"`
+	DnsGroup struct {
+		Name string `xml:"name"`
+	} `xml:"dnsGroup"`
+	IpInterfaceGroup []struct {
+		Name string `xml:"name"`
+	} `xml:"ipInterfaceGroup"`
+	Zone []struct {
+		Name string `xml:"name"`
+	} `xml:"zone"`
 }
 
 // SBC represents a single Sonus session border controller
@@ -90,12 +93,17 @@ func NewSBC(address, user, password string) *SBC {
 	}
 	sbc.System = sys.Admin.Name
 
-	// Get the address contexts
-	err = sbc.GetAndParse(ctx, ac, contextListPath)
-	if err != nil {
-		log.Errorf("Error getting context list: %v", err)
-		return nil
+	defaultContext := AddressContext{
+		Name: "default",
 	}
+
+	// Get the address contexts
+	// err = sbc.GetAndParse(ctx, ac, contextListPath)
+	// if err != nil {
+	// 	log.Errorf("Error getting context list: %v", err)
+	// 	return nil
+	// }
+	ac.AddressContext = append(ac.AddressContext, defaultContext)
 	sbc.AddressContexts = ac
 	return sbc
 }
@@ -103,7 +111,7 @@ func NewSBC(address, user, password string) *SBC {
 // buildURL takes the given path, adds the base to the beginning, and applies any
 // formatting arguments
 func (s *SBC) buildURL(path string, args ...any) string {
-	url := fmt.Sprintf("https://%s/api%s", s.target, path)
+	url := fmt.Sprintf("https://%s/restconf/data%s", s.target, path)
 	return fmt.Sprintf(url, args...)
 }
 
@@ -143,6 +151,7 @@ func (s *SBC) callSBC(ctx context.Context, method string, url string, body io.Re
 		return nil, err
 	}
 	req.SetBasicAuth(s.user, s.password)
+	req.Header.Add("Accept", "application/vnd.yang.collection+xml")
 	var resp *http.Response
 	for retries := 3; retries > 0; retries-- {
 		resp, err = s.client.Do(req)
