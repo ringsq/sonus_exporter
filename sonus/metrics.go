@@ -1,62 +1,11 @@
 package sonus
 
 import (
-	"context"
+	"fmt"
+	"reflect"
 
-	"github.com/fatih/structs"
-	"github.com/go-kit/log"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/ringsq/sonus_exporter/config"
-	"golang.org/x/sync/errgroup"
 )
-
-type Calls struct {
-	CallCurrentStatistics []callStats `xml:"callCurrentStatistics"`
-}
-
-type callStats struct {
-	Name                       string  `xml:"name"`
-	InUsage                    float64 `xml:"inUsage"`
-	OutUsage                   float64 `xml:"outUsage"`
-	InCalls                    float64 `xml:"inCalls"`
-	OutCalls                   float64 `xml:"outCalls"`
-	InCallAttempts             float64 `xml:"inCallAttempts"`
-	OutCallAttempts            float64 `xml:"outCallAttempts"`
-	MaxCompletedCalls          float64 `xml:"maxCompletedCalls"`
-	CallSetupTime              float64 `xml:"callSetupTime"`
-	CallSetups                 float64 `xml:"callSetups"`
-	RoutingAttempts            float64 `xml:"routingAttempts"`
-	InBwUsage                  float64 `xml:"inBwUsage"`
-	OutBwUsage                 float64 `xml:"outBwUsage"`
-	MaxActiveBwUsage           float64 `xml:"maxActiveBwUsage"`
-	CallsWithPktOutage         float64 `xml:"callsWithPktOutage"`
-	CallsWithPktOutageAtEnd    float64 `xml:"callsWithPktOutageAtEnd"`
-	TotalPktOutage             float64 `xml:"totalPktOutage"`
-	MaxPktOutage               float64 `xml:"maxPktOutage"`
-	PodEvents                  float64 `xml:"podEvents"`
-	PlayoutBufferGood          float64 `xml:"playoutBufferGood"`
-	PlayoutBufferAcceptable    float64 `xml:"playoutBufferAcceptable"`
-	PlayoutBufferPoor          float64 `xml:"playoutBufferPoor"`
-	PlayoutBufferUnacceptable  float64 `xml:"playoutBufferUnacceptable"`
-	SipRegAttempts             float64 `xml:"sipRegAttempts"`
-	SipRegCompletions          float64 `xml:"sipRegCompletions"`
-	CallsWithPsxDips           float64 `xml:"callsWithPsxDips"`
-	TotalPsxDips               float64 `xml:"totalPsxDips"`
-	ActiveRegs                 float64 `xml:"activeRegs"`
-	MaxActiveRegs              float64 `xml:"maxActiveRegs"`
-	ActiveSubs                 float64 `xml:"activeSubs"`
-	MaxActiveSubs              float64 `xml:"maxActiveSubs"`
-	PeakCallRate               float64 `xml:"peakCallRate"`
-	TotalOnGoingCalls          float64 `xml:"totalOnGoingCalls"`
-	TotalStableCalls           float64 `xml:"totalStableCalls"`
-	TotalCallUpdates           float64 `xml:"totalCallUpdates"`
-	TotalEmergencyStableCalls  float64 `xml:"totalEmergencyStableCalls"`
-	TotalEmergencyOnGoingCalls float64 `xml:"totalEmergencyOnGoingCalls"`
-	InRetargetCalls            float64 `xml:"inRetargetCalls"`
-	InRetargetRegs             float64 `xml:"inRetargetRegs"`
-	OutRetargetCalls           float64 `xml:"outRetargetCalls"`
-	OutRetargetRegs            float64 `xml:"outRetargetRegs"`
-}
 
 // metricHelp contains a table that describes the values in the Sonus response.
 // It is used for building the HELP line for the corresponding metric.
@@ -111,55 +60,51 @@ func getHelp(field string) string {
 	return help
 }
 
-func CallMetrics(ctx context.Context, sbc *SBC, cfg *config.Config, registry *prometheus.Registry, logger log.Logger) error {
-	var (
-		callStats = new(callStats)
-	)
-
+// BuildMetrics takes a registry and a structure and creates Gauge metrics for any float64 items.
+// The metric names are based on the fields in the structure and any substructures.
+// eg. structname_structname_fieldName
+//
+// The returned map is keyed  by the metric name
+func BuildMetrics(registry *prometheus.Registry, t reflect.Type) map[string]*prometheus.GaugeVec {
+	ch := make(chan *Metric)
 	stats := map[string]*prometheus.GaugeVec{}
-	for _, field := range structs.Names(callStats) {
-		if field == "Name" {
-			continue
-		}
-		metric := prometheus.NewGaugeVec(prometheus.GaugeOpts{
-			Namespace: "sonus",
-			Subsystem: "TG_calls",
-			Name:      field,
-			Help:      getHelp(field),
-		}, []string{"system", "addresscontext", "zone", "name"})
-		registry.MustRegister(metric)
-		stats[field] = metric
+	go func() {
+		examiner(ch, "sonus", t)
+		close(ch)
+	}()
+	for x := range ch {
+		registry.MustRegister(x.Metric)
+		stats[x.Name] = x.Metric
 	}
 
-	g := &errgroup.Group{}
-	g.SetLimit(3)
+	return stats
+}
 
-	for _, aCtx := range sbc.AddressContexts.AddressContext {
-		for _, zone := range aCtx.Zone {
-			g.Go(func() error {
-				aCtx := aCtx
-				zone := zone
-
-				calls := &Calls{}
-				err := sbc.GetAndParse(ctx, calls, callStatusPath, aCtx.Name, zone.Name)
-				if err != nil {
-					return err
-				}
-				for _, sipStat := range calls.CallCurrentStatistics {
-					for _, field := range structs.Fields(sipStat) {
-						if field.Kind().String() != "float64" {
-							continue
-						}
-						metric, ok := stats[field.Name()]
-						if !ok {
-							continue
-						}
-						metric.WithLabelValues(sbc.System, aCtx.Name, zone.Name, sipStat.Name).Set(field.Value().(float64))
-					}
-				}
-				return nil
-			})
+func examiner(ch chan *Metric, sub string, t reflect.Type) {
+	if t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	switch t.Kind() {
+	case reflect.Array, reflect.Chan, reflect.Map, reflect.Ptr, reflect.Slice:
+		examiner(ch, fmt.Sprintf("%s_%s", sub, t.Name()), t.Elem())
+	case reflect.Struct:
+		for i := 0; i < t.NumField(); i++ {
+			f := t.Field(i)
+			switch f.Type.Kind() {
+			case reflect.Slice:
+				examiner(ch, fmt.Sprintf("%s_%s", sub, f.Name), f.Type.Elem())
+			case reflect.Float64:
+				// ch <- fmt.Sprintf("%s_%s (%s)\n", sub, f.Name, f.Type.Kind().String())
+				metric := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+					Namespace: sub,
+					Name:      f.Name,
+					Help:      getHelp(f.Name),
+				}, []string{"system", "addresscontext", "zone", "trunkgroup"})
+				m := &Metric{Name: fmt.Sprintf("%s_%s", sub, f.Name), Metric: metric}
+				ch <- m
+			case reflect.Struct:
+				examiner(ch, fmt.Sprintf("%s_%s", sub, f.Name), f.Type)
+			}
 		}
 	}
-	return g.Wait()
 }

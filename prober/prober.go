@@ -22,4 +22,5 @@ import (
 	"github.com/ringsq/sonus_exporter/sonus"
 )
 
+// A ProbeFn calls the SBC and adds its metrics to the registry
 type ProbeFn func(ctx context.Context, sbc *sonus.SBC, cfg *config.Config, registry *prometheus.Registry, logger log.Logger) error

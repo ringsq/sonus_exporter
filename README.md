@@ -2,6 +2,8 @@
 
 The Sonus Exporter is a Golang-based project that implements the multi-target exporter pattern and exposes metrics for a Ribbon SBC (Session Border Controller) in a format that can be scraped by Prometheus.
 
+**This version works with SBC v11.1+ utilizing the new RESTCONF API**
+
 ## Features
 
 - Multi-target exporter pattern: Can scrape metrics from multiple SBC instances.
@@ -35,9 +37,8 @@ Start `sonus_exporter` as a daemon or from CLI:
 ./sonus_exporter
 ```
 
-Visit http://localhost:9116/sonus?module=if_mib&target=1.2.3.4 where `1.2.3.4` is the IP or
-FQDN of the sonus device to get metrics from and `if_mib` is the default module, defined
-in `sonus.yml`.
+Visit http://localhost:9700/probe?target=1.2.3.4 where `1.2.3.4` is the IP or
+FQDN of the sonus device from which to get metrics.
 
 ## Configuration
 
@@ -57,9 +58,7 @@ scrape_configs:
       - targets:
         - 192.168.1.2  # sonus device.
         - sbc.local # sonus device.
-    metrics_path: /sonus
-    params:
-      module: [if_mib]
+    metrics_path: /probe
     relabel_configs:
       - source_labels: [__address__]
         target_label: __param_target
